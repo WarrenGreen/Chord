@@ -32,10 +32,9 @@ public class Node {
   private String ringIp;
   private int ringPort;
 
+  private static ServerSocket serverSocket = null;
+
   private AtomicBoolean running = new AtomicBoolean(true);
-
-  private ServerSocket serverSocket = null;
-
   private BlockingQueue<Message> queue = new LinkedBlockingQueue<>();
 
   private Finger[] fingerTable;
@@ -52,6 +51,8 @@ public class Node {
       serverSocket = new ServerSocket(port);
     } catch (IOException e) {
       e.printStackTrace();
+      System.err.println("Server socket failure.");
+      System.exit(1);
     }
 
     Thread listener = new Thread(getListener());
@@ -66,7 +67,8 @@ public class Node {
       return fingerTable[0].toString();
     } else {
       String n0 = closestPrecedingNode(id);
-      Message.send(n0, this.toString(), Message.FIND_SUCCESSOR);
+      Message.send(n0, new Message(ip+":"+port, id, Message.FIND_SUCCESSOR, ""));
+
       Message m = queue.poll();
       while( !m.myMessage(Message.RET_SUCCESSOR, id)) { //Not sure about this...
         queue.add(m);
@@ -148,10 +150,20 @@ public class Node {
           e.printStackTrace();
         }
 
+        Message msg = null;
         try {
-          queue.add(new Message(in.readLine()));
+          msg = new Message(in.readLine());
         } catch (IOException e) {
           e.printStackTrace();
+        }
+
+        switch (msg.getType()) {
+          case Message.FIND_SUCCESSOR:
+            Message.send(msg.getFromIp(), new Message(ip+":"+port, msg.getRegardingId(),
+                    Message.RET_SUCCESSOR, findSuccessor(id)));
+            break;
+          default:
+            queue.add(msg);
         }
 
       }
