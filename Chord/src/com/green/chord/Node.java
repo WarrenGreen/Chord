@@ -7,9 +7,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.Queue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -28,9 +26,9 @@ public class Node {
   //Potentially convert these to generic Param type inside map as parameters grow
   private String ip = null;
   private int port = -1;
-  private String Id;
+  private String id;
   private boolean leader;
-  private int fingerCount = 10;
+  private int fingerCount = 256;
   private String ringIp;
   private int ringPort;
 
@@ -41,10 +39,14 @@ public class Node {
   private BlockingQueue<Message> queue = new LinkedBlockingQueue<>();
 
   private Finger[] fingerTable;
+  private Finger predecessor;
 
   public Node(String configFile) {
     readConfig(configFile);
     fingerTable = new Finger[fingerCount];
+
+    if(leader)
+      initRing();
 
     try {
       serverSocket = new ServerSocket(port);
@@ -59,8 +61,38 @@ public class Node {
     stabilizer.start();
   }
 
-  private String findSuccessor(String hash) {
-    return null;
+  private String findSuccessor(String id) {
+    if((id.compareTo(this.id) > 0) && (id.compareTo(fingerTable[0].getId()) <= 0)){
+      return fingerTable[0].toString();
+    } else {
+      String n0 = closestPrecedingNode(id);
+      Message.send(n0, this.toString(), Message.FIND_SUCCESSOR);
+      Message m = queue.poll();
+      while( !m.myMessage(Message.RET_SUCCESSOR, id)) { //Not sure about this...
+        queue.add(m);
+        m = queue.poll();
+      }
+      return m.getValue();
+    }
+  }
+
+  private String closestPrecedingNode(String id) {
+    for(int i=fingerTable.length-1;i>=0;i++) {
+      String finger = fingerTable[i].getId();
+      if((finger.compareTo(this.id) > 0) && (finger.compareTo(id) < 0)) { // finger[i] in (n, id)
+        return fingerTable[i].toString();
+      }
+    }
+
+    return this.toString();
+  }
+
+  private void initRing() {
+    for(int i=0;i<fingerTable.length;i++) {
+      fingerTable[i] = new Finger(ip, port, id);
+    }
+
+    predecessor = null;
   }
 
   private void readConfig(String configFile) {
@@ -100,7 +132,7 @@ public class Node {
 
     assert(ip != null);
     assert(port > 0);
-    Id = Params.toSHA1(ip, port);
+    id = Params.toSHA1(ip, port);
   }
 
   private Runnable getListener() {
@@ -130,5 +162,10 @@ public class Node {
   private Runnable getStabilizer() {
     //TODO
     return null;
+  }
+
+  @Override
+  public String toString() {
+    return ip+":"+port;
   }
 }
