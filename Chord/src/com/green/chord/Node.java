@@ -1,16 +1,19 @@
 package com.green.chord;
 
+import com.sun.istack.internal.logging.Logger;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.Scanner;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 
 /**
  * @author wsgreen
@@ -23,6 +26,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @ringPort an ip corresponding to the ringIp
  */
 public class Node {
+
+  private static final Logger LOGGER = Logger.getLogger(Node.class);
+
+  private static final String FIND = "find";
+  private static final String INSERT = "insert";
+  private static final String HELP = "Please enter a valid command.";
+
   //Potentially convert these to generic Param type inside map as parameters grow
   private String ip = null;
   private int port = -1;
@@ -32,10 +42,9 @@ public class Node {
   private String ringIp;
   private int ringPort;
 
-  private static ServerSocket serverSocket = null;
+  private ServerSocket serverSocket = null;
 
   private AtomicBoolean running = new AtomicBoolean(true);
-  private BlockingQueue<Message> queue = new LinkedBlockingQueue<>();
 
   private Finger[] fingerTable;
   private Finger predecessor;
@@ -44,8 +53,14 @@ public class Node {
     readConfig(configFile);
     fingerTable = new Finger[fingerCount];
 
+    LOGGER.info(String.format("%s: init", this.id));
+
     if(leader)
       initRing();
+    else {
+      fingerTable[0] = null;
+      joinRing();
+    }
 
     try {
       serverSocket = new ServerSocket(port);
@@ -60,20 +75,22 @@ public class Node {
 
     Thread stabilizer = new Thread(getStabilizer());
     stabilizer.start();
+
+    Thread client = new Thread(getClient());
+    client.start();
   }
 
   private String findSuccessor(String id) {
-    if((id.compareTo(this.id) > 0) && (id.compareTo(fingerTable[0].getId()) <= 0)){
+    LOGGER.log(Level.INFO, String.format("%s: find %s", this.id, id));
+     if( fingerTable[0] != null &&
+             this.id.compareTo(fingerTable[0].getId()) ==0 ||
+            ((id.compareTo(this.id) > 0) && (id.compareTo(fingerTable[0].getId()) <= 0)) ||
+            ((id.compareTo(this.id) > 0) && (id.compareTo(fingerTable[0].getId()) > 0) && this.id.compareTo(fingerTable[0].getId()) >= 0) ){
       return fingerTable[0].toString();
     } else {
       String n0 = closestPrecedingNode(id);
-      Message.send(n0, new Message(ip+":"+port, id, Message.FIND_SUCCESSOR, ""));
+      Message m = Message.sendWithResponse(n0, new Message(ip + ":" + port, id, Message.FIND_SUCCESSOR, ""));
 
-      Message m = queue.poll();
-      while( !m.myMessage(Message.RET_SUCCESSOR, id)) { //Not sure about this...
-        queue.add(m);
-        m = queue.poll();
-      }
       return m.getValue();
     }
   }
@@ -92,6 +109,17 @@ public class Node {
   private void initRing() {
     for(int i=0;i<fingerTable.length;i++) {
       fingerTable[i] = new Finger(ip, port, id);
+    }
+
+    predecessor = null;
+  }
+
+  private void joinRing() {
+    Message m = Message.sendWithResponse(ringIp+":"+ringPort, new Message(ip + ":" + port, id, Message.FIND_SUCCESSOR, ""));
+
+    fingerTable[0] = new Finger(m.getValue());
+    for(int i=1;i<fingerTable.length;i++) {
+      fingerTable[i] = new Finger(findSuccessor(fingerTable[i-1].getId()));
     }
 
     predecessor = null;
@@ -141,29 +169,33 @@ public class Node {
     return  () -> {
       Socket clientSocket = null;
       BufferedReader in = null;
+      PrintWriter out = null;
+      Message msg = null;
 
       while(running.get()) {
         try {
           clientSocket = serverSocket.accept();
           in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream()));
-        } catch (IOException e) {
-          e.printStackTrace();
-        }
-
-        Message msg = null;
-        try {
+          out = new PrintWriter(clientSocket.getOutputStream(), true);
           msg = new Message(in.readLine());
+          LOGGER.info(String.format("%s: receive %s", this.id, msg.getFromIp()));
+
+          switch (msg.getType()) {
+            case Message.FIND_SUCCESSOR:
+              Message resp = null;
+              if(msg.getRegardingId().compareTo(this.id)==0 ) {
+                resp = new Message(ip + ":" + port, msg.getRegardingId(),
+                        Message.RET_SUCCESSOR, this.id);
+              } else {
+                 resp = new Message(ip + ":" + port, msg.getRegardingId(),
+                        Message.RET_SUCCESSOR, findSuccessor(msg.getRegardingId()));
+              }
+              out.println(resp.toString());
+              break;
+          }
+
         } catch (IOException e) {
           e.printStackTrace();
-        }
-
-        switch (msg.getType()) {
-          case Message.FIND_SUCCESSOR:
-            Message.send(msg.getFromIp(), new Message(ip+":"+port, msg.getRegardingId(),
-                    Message.RET_SUCCESSOR, findSuccessor(id)));
-            break;
-          default:
-            queue.add(msg);
         }
 
       }
@@ -174,6 +206,27 @@ public class Node {
   private Runnable getStabilizer() {
     //TODO
     return null;
+  }
+
+  private Runnable getClient() {
+    return () -> {
+      Scanner in = new Scanner(System.in);
+      String input = null;
+
+      while( (input = in.nextLine()).compareToIgnoreCase("end") != 0) {
+        switch (input) {
+          default:
+            System.out.println(Node.HELP);
+        }
+      }
+
+      running.set(false);
+      try {
+        serverSocket.close();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    };
   }
 
   @Override

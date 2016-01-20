@@ -1,6 +1,6 @@
 package com.green.chord;
 
-import com.sun.istack.internal.NotNull;
+import com.sun.org.apache.xerces.internal.impl.dv.util.HexBin;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -27,7 +27,7 @@ public class Params {
       System.exit(2);
     }
 
-    return new String(md.digest(value.getBytes()));
+    return HexBin.encode(md.digest(value.getBytes()));
   }
 
   public static String toSHA1(String ip, int port) {

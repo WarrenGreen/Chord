@@ -9,14 +9,10 @@ public class Finger {
   private String id;
 
   public Finger(String finger) {
-    int colon = finger.indexOf(':');
-    ip = finger.substring(0, colon).trim();
-    port = Integer.parseInt(finger.substring(colon+1));
-  }
-
-  public Finger(String ip, int port) {
-    this.ip = ip;
-    this.port = port;
+    String[] split = finger.split(":");
+    ip = split[0].trim();
+    port = Integer.parseInt(split[1]);
+    id = split[2].trim();
   }
 
   public Finger(String ip, int port, String Id) {
@@ -51,6 +47,6 @@ public class Finger {
 
   @Override
   public String toString() {
-    return ip+":"+port;
+    return ip+":"+port+":"+id;
   }
 }
